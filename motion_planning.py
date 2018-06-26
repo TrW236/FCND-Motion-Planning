@@ -5,7 +5,7 @@ from enum import Enum, auto
 
 import numpy as np
 
-from planning_utils import a_star, heuristic, create_grid
+from planning_utils import a_star, heuristic, create_grid, prune_path
 from udacidrone import Drone
 from udacidrone.connection import MavlinkConnection
 from udacidrone.messaging import MsgID
@@ -59,6 +59,8 @@ class MotionPlanning(Drone):
                     self.disarming_transition()
 
     def state_callback(self):
+        # print('global home {0}, position {1}, local position {2}'.format(self.global_home, self.global_position,
+        #                                                                  self.local_position))
         if self.in_mission:
             if self.flight_state == States.MANUAL:
                 self.arming_transition()
@@ -115,34 +117,47 @@ class MotionPlanning(Drone):
         self.flight_state = States.PLANNING
         print("Searching for a path ...")
         TARGET_ALTITUDE = 5
-        SAFETY_DISTANCE = 5
+        SAFETY_DISTANCE = 10
 
         self.target_position[2] = TARGET_ALTITUDE
 
         # TODO: read lat0, lon0 from colliders into floating point values
-        
+        import csv
+        home_pos = None
+        with open('colliders.csv', newline='') as f:
+            reader = csv.reader(f, delimiter=',')
+            if reader is not None:
+                home_pos = reader.__next__()
+                home_pos = [float(list(filter(None, s.split(' ')))[1]) for s in home_pos]
         # TODO: set home position to (lon0, lat0, 0)
-
+        if home_pos is not None:
+            self.set_home_position(home_pos[1], home_pos[0], 0)
+            pass
+        print("home_pos: ", home_pos)
         # TODO: retrieve current global position
- 
+        global_pos = (self._longitude, self._latitude, self._altitude)
+        print("global_pos: ", global_pos)
         # TODO: convert to current local position using global_to_local()
-        
+        local_pos = global_to_local(global_pos, self.global_home)
+        print("converted local: ", local_pos)
         print('global home {0}, position {1}, local position {2}'.format(self.global_home, self.global_position,
                                                                          self.local_position))
         # Read in obstacle map
-        data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)
-        
+        data = np.loadtxt('colliders.csv', delimiter=',', dtype='Float64', skiprows=2)  # skip the first two rows
+
         # Define a grid for a particular altitude and safety margin around obstacles
         grid, north_offset, east_offset = create_grid(data, TARGET_ALTITUDE, SAFETY_DISTANCE)
         print("North offset = {0}, east offset = {1}".format(north_offset, east_offset))
         # Define starting point on the grid (this is just grid center)
-        grid_start = (-north_offset, -east_offset)
         # TODO: convert start position to current position rather than map center
-        
+        grid_start = (int(local_pos[0])-north_offset, int(local_pos[1])-east_offset)
         # Set goal as some arbitrary position on the grid
-        grid_goal = (-north_offset + 10, -east_offset + 10)
+        grid_goal = (-122.398880, 37.793660, 0)
         # TODO: adapt to set goal as latitude / longitude position and convert
-
+        grid_goal = global_to_local(grid_goal, self.global_home)
+        print("grid_goal: ", grid_goal)
+        grid_goal = (int(grid_goal[0])-north_offset, int(grid_goal[1])-east_offset)
+        
         # Run A* to find a path from start to goal
         # TODO: add diagonal motions with a cost of sqrt(2) to your A* implementation
         # or move to a different search space such as a graph (not done here)
@@ -150,7 +165,7 @@ class MotionPlanning(Drone):
         path, _ = a_star(grid, heuristic, grid_start, grid_goal)
         # TODO: prune path to minimize number of waypoints
         # TODO (if you're feeling ambitious): Try a different approach altogether!
-
+        path = prune_path(path)
         # Convert path to waypoints
         waypoints = [[p[0] + north_offset, p[1] + east_offset, TARGET_ALTITUDE, 0] for p in path]
         # Set self.waypoints

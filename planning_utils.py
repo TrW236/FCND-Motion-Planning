@@ -1,7 +1,15 @@
 from enum import Enum
 from queue import PriorityQueue
 import numpy as np
+import math
+import utm
+COST_DIAG = math.sqrt(2.0)
 
+def global_to_local(global_position, global_home):
+    (east_home, north_home, _, _) = utm.from_latlon(global_home[1], global_home[0])
+    (east, north, _, _) = utm.from_latlon(global_position[1], global_position[0])
+    local_position = np.array([north - north_home, east - east_home, -global_position[2]])
+    return local_position
 
 def create_grid(data, drone_altitude, safety_distance):
     """
@@ -55,6 +63,10 @@ class Action(Enum):
     EAST = (0, 1, 1)
     NORTH = (-1, 0, 1)
     SOUTH = (1, 0, 1)
+    NE = (-1, 1 , COST_DIAG)
+    NW = (-1, -1, COST_DIAG)
+    SE = (1, 1, COST_DIAG)
+    SW = (1, -1, COST_DIAG)
 
     @property
     def cost(self):
@@ -84,6 +96,18 @@ def valid_actions(grid, current_node):
         valid_actions.remove(Action.WEST)
     if y + 1 > m or grid[x, y + 1] == 1:
         valid_actions.remove(Action.EAST)
+    # NE
+    if x - 1 < 0 or y + 1 > m or grid[x - 1, y + 1] == 1:
+        valid_actions.remove(Action.NE)
+    # NW
+    if x - 1 < 0 or y - 1 < 0 or grid[x - 1, y - 1] == 1:
+        valid_actions.remove(Action.NW)
+    # SE
+    if x + 1 > n or y + 1 > m or grid[x + 1, y + 1] == 1:
+        valid_actions.remove(Action.SE)
+    # SW
+    if x + 1 > n or y - 1 < 0 or grid[x + 1, y - 1] == 1:
+        valid_actions.remove(Action.SW)
 
     return valid_actions
 
@@ -104,7 +128,7 @@ def a_star(grid, h, start, goal):
         current_node = item[1]
         if current_node == start:
             current_cost = 0.0
-        else:              
+        else:           
             current_cost = branch[current_node][0]
             
         if current_node == goal:        
@@ -139,6 +163,29 @@ def a_star(grid, h, start, goal):
         print('**********************') 
     return path[::-1], path_cost
 
+
+def collinearity_2D(p1, p2, p3): 
+    collinear = False
+    # Calculate the determinant of the matrix using integer arithmetic 
+    det = p1[0]*(p2[1] - p3[1]) + p2[0]*(p3[1] - p1[1]) + p3[0]*(p1[1] - p2[1])
+    # Set collinear to True if the determinant is equal to zero
+    if math.fabs(det) < 0.1:
+        collinear = True
+    return collinear
+
+
+def prune_path(path):
+    pruned_path = [p for p in path]
+    i = 0
+    while i < len(pruned_path) - 2:
+        p1 = pruned_path[i]
+        p2 = pruned_path[i + 1]
+        p3 = pruned_path[i + 2]       
+        if collinearity_2D(p1, p2, p3):
+            pruned_path.remove(pruned_path[i+1])
+        else:
+            i += 1
+    return pruned_path
 
 
 def heuristic(position, goal_position):
